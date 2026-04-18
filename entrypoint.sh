@@ -9,8 +9,8 @@ if [ "$ENABLE_WARP" = "true" ]; then
         echo "⚠️ /dev/net/tun not found. WARP might not work. Ensure --cap-add=NET_ADMIN and --device /dev/net/tun are used."
     fi
 
-    # Start warp-svc
-    warp-svc --accept-tos &
+    # Start warp-svc and suppress noisy hardware/dbus warnings
+    warp-svc --accept-tos > /var/log/warp-svc.log 2>&1 &
     
     # Wait for warp-svc to be ready
     MAX_RETRIES=15
@@ -29,6 +29,8 @@ if [ "$ENABLE_WARP" = "true" ]; then
         # Register if needed
         if ! warp-cli --accept-tos status | grep -q "Registration Name"; then
              echo "📝 Registering WARP..."
+             # Delete old registration if it exists to avoid "Old registration is still around" error
+             warp-cli --accept-tos registration delete > /dev/null 2>&1 || true
              warp-cli --accept-tos registration new
         fi
         

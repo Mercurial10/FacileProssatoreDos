@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cloudflare-warp \
     ffmpeg \
     xvfb \
+    xauth \
     chromium \
     libnss3 \
     libatk1.0-0 \
