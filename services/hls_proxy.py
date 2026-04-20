@@ -45,6 +45,7 @@ from config import (
     APP_VERSION,
     ENABLE_WARP,
     ENABLE_REMUXING,
+    BYPASS_PROXY_EXTRACTORS,
 )
 from extractors.generic import GenericHLSExtractor, ExtractorError
 from services.manifest_rewriter import ManifestRewriter
@@ -342,6 +343,18 @@ class HLSProxy:
         # This reuses connections for the same proxy to improve performance
         self.proxy_sessions = {}
 
+        # Map of extractor names to their known domains for automatic bypass
+        self.extractor_domain_map = {
+            "cinemacity": ["cinemacity.cc", "cccdn.net", "citysync.club"],
+            "vixsrc": ["vixsrc.to", "vixcloud.co", "v0e.pw", "vidsrc.to"],
+            "vavoo": ["vavoo.to", "vcdn.io"],
+            "dlstreams": ["dlstreams.to", "dlhd.sx", "daddylive"],
+            "sportsonline": ["sportsonline", "sportzonline", "it.freestreams-live1.com"],
+            "freeshot": ["freeshot.live", "popcdn.day"],
+            "mixdrop": ["mixdrop.co", "mixdrop.to", "mixdrop.ch"],
+            "voe": ["voe.sx", "voe-network.net"],
+        }
+
         # Version information
         self.latest_version = "Checking..."
         self.warp_status = "Disabled" if not ENABLE_WARP else "Checking..."
@@ -522,11 +535,17 @@ class HLSProxy:
         - proxy_url: The proxy URL being used, or None for direct connection
         """
         proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, GLOBAL_PROXIES)
-        
-        # Force direct connection for domains that block proxies/WARP
-        if any(d in url for d in ["cinemacity.cc", "cccdn.net"]):
-            proxy = None
-            
+
+        # Dynamic Extractor-based Bypass
+        # If the URL domain matches an extractor in BYPASS_PROXY_EXTRACTORS, force direct
+        for extractor in BYPASS_PROXY_EXTRACTORS:
+            bypass_domains = self.extractor_domain_map.get(extractor, [])
+            # Also check the extractor name itself as a domain fragment
+            if any(d in url.lower() for d in bypass_domains + [extractor]):
+                logger.debug(f"⚡ Bypassing proxy for {extractor} (URL: {url[:50]}...)")
+                proxy = None
+                break
+
         prefer_default_family = "ai.the-sunmoon.site/key/" in url
 
         if proxy:

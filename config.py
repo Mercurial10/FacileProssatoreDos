@@ -123,9 +123,18 @@ def get_ssl_setting_for_url(url: str, transport_routes: list) -> bool:
     # Se non trova corrispondenza, SSL abilitato per default
     return False
 
+# --- WARP Configuration ---
+ENABLE_WARP = os.environ.get("ENABLE_WARP", "false").lower() == "true"
+
 # Configurazione proxy
 GLOBAL_PROXIES = parse_proxies('GLOBAL_PROXY')
 TRANSPORT_ROUTES = parse_transport_routes()
+
+# Auto-add WARP to global proxies if enabled and none provided
+if ENABLE_WARP and not GLOBAL_PROXIES:
+    # Default WARP port in Full version is 10000
+    GLOBAL_PROXIES = ["socks5://127.0.0.1:10000"]
+    logging.info("🛡️ WARP enabled: added default WARP proxy to global list.")
 
 # Logging configurazione proxy
 if GLOBAL_PROXIES: logging.info(f"🌍 Loaded {len(GLOBAL_PROXIES)} global proxies.")
@@ -141,14 +150,11 @@ MAX_RECORDING_DURATION = int(os.environ.get("MAX_RECORDING_DURATION", 28800))  #
 RECORDINGS_RETENTION_DAYS = int(os.environ.get("RECORDINGS_RETENTION_DAYS", 7))  # Auto-cleanup after 7 days
 
 # --- Version/Mode Configuration ---
-APP_VERSION = "2.5.5"
+APP_VERSION = "2.5.6"
 
 # Detect if we are running in Full or Light mode
 _has_solvers = os.path.exists("flaresolverr") and (os.path.exists("byparr") or os.path.exists("byparr_src"))
 VERSION_MODE = "Full" if _has_solvers else "Light"
-
-# --- WARP Configuration ---
-ENABLE_WARP = os.environ.get("ENABLE_WARP", "false").lower() == "true"
 
 # Create recordings directory if DVR is enabled
 if DVR_ENABLED and not os.path.exists(RECORDINGS_DIR):
