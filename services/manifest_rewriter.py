@@ -370,6 +370,52 @@ class ManifestRewriter:
                 else:
                     rewritten_lines.append(line)
 
+            # 2b. GESTIONE I-FRAME STREAMS
+            elif line.startswith("#EXT-X-I-FRAME-STREAM-INF:") and 'URI=' in line:
+                uri_start = line.find('URI="') + 5
+                uri_end = line.find('"', uri_start)
+
+                if uri_start > 4 and uri_end > uri_start:
+                    original_iframe_url = line[uri_start:uri_end]
+                    absolute_iframe_url = urljoin(base_url, original_iframe_url)
+                    encoded_iframe_url = urllib.parse.quote(absolute_iframe_url, safe="")
+
+                    # Gli I-FRAME sono solitamente m3u8 o segmenti a sé stanti
+                    proxy_iframe_url = (
+                        f"{proxy_base}/proxy/hls/manifest.m3u8?d={encoded_iframe_url}{header_params}"
+                    )
+                    new_line = line[:uri_start] + proxy_iframe_url + line[uri_end:]
+                    rewritten_lines.append(new_line)
+                    logger.info(
+                        f"Redirected I-Frame URL: {absolute_iframe_url} -> {proxy_iframe_url}"
+                    )
+                else:
+                    rewritten_lines.append(line)
+
+            # 2c. GESTIONE SESSION-KEY
+            elif line.startswith("#EXT-X-SESSION-KEY:") and 'URI=' in line:
+                uri_start = line.find('URI="') + 5
+                uri_end = line.find('"', uri_start)
+
+                if uri_start > 4 and uri_end > uri_start:
+                    original_key_url = line[uri_start:uri_end]
+                    absolute_key_url = urljoin(base_url, original_key_url)
+                    encoded_key_url = urllib.parse.quote(absolute_key_url, safe="")
+                    
+                    # Proxy KEY URL (come per #EXT-X-KEY)
+                    proxy_key_url = (
+                        f"{proxy_base}/key?key_url={encoded_key_url}"
+                        f"&h_Referer={urllib.parse.quote(base_url, safe='')}"
+                    )
+                    proxy_key_url += header_params
+                    if api_password:
+                        proxy_key_url += f"&api_password={api_password}"
+
+                    new_line = line[:uri_start] + proxy_key_url + line[uri_end:]
+                    rewritten_lines.append(new_line)
+                else:
+                    rewritten_lines.append(line)
+
             # 3. GESTIONE MAP (Init Segment per fMP4)
             elif line.startswith("#EXT-X-MAP:") and 'URI=' in line:
                 uri_start = line.find('URI="') + 5
@@ -403,10 +449,10 @@ class ManifestRewriter:
 
                 encoded_url = urllib.parse.quote(absolute_url, safe="")
 
-                # Se e .m3u8 usa /proxy/manifest.m3u8, altrimenti determina estensione
+                # Se e .m3u8 usa /proxy/hls/manifest.m3u8, altrimenti determina estensione
                 if ".m3u8" in absolute_url:
                     proxy_url = (
-                        f"{proxy_base}/proxy/manifest.m3u8?url={encoded_url}{header_params}"
+                        f"{proxy_base}/proxy/hls/manifest.m3u8?d={encoded_url}{header_params}"
                     )
                 else:
                     # Se l'URL originale ha estensione mp4/m4s, usa .mp4, altrimenti default a .ts
