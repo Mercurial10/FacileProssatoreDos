@@ -535,7 +535,13 @@ class HLSProxy:
             if not domain: return
             
             # If domain matches any pattern and hasn't been bypassed yet
-            if any(p in domain.lower() for p in bypass_patterns):
+            is_problematic = any(p in domain.lower() for p in bypass_patterns)
+            
+            # Additional heuristic for Mediahubmx randomized domains
+            if not is_problematic and (".ngolp" in domain.lower() or "sunshine" in url.lower()):
+                is_problematic = True
+
+            if is_problematic:
                 if domain not in self.bypassed_warp_domains:
                     logging.info(f"⚡ [Dynamic Bypass] Adding {domain} to WARP exclusion list...")
                     # Add to WARP bypass (works in TUN mode)
@@ -1735,10 +1741,14 @@ class HLSProxy:
                 f"🔍 Extracting: {url} (Host: {host_param}, Redirect: {redirect_stream})"
             )
 
+            # Collect all query parameters to pass to the extractor
+            extractor_kwargs = dict(request.query)
+            extractor_kwargs['request_headers'] = dict(request.headers)
+
             extractor = await self.get_extractor(
                 url, dict(request.headers), host=host_param
             )
-            result = await extractor.extract(url, request_headers=dict(request.headers))
+            result = await extractor.extract(url, **extractor_kwargs)
 
             stream_url = result["destination_url"]
             stream_headers = result.get("request_headers", {})
