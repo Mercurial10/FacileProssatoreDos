@@ -88,43 +88,33 @@ class DLStreamsExtractor:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}"
 
-    async def _get_browser(self):
-        if self._browser:
-            return self._browser
-        async with self._browser_launch_lock:
-            if self._browser:
-                return self._browser
-            
-            import os, sys
-            chrome_path = os.getenv("CHROME_BIN") or os.getenv("CHROME_EXE_PATH")
-            logger.debug(f"DLStreams initialization - CHROME_BIN: {os.getenv('CHROME_BIN')}, CHROME_EXE_PATH: {os.getenv('CHROME_EXE_PATH')}")
-            
-            # Use headless on Linux/Termux/Docker, headful on Windows for stability
-            is_linux = sys.platform.startswith("linux")
-            is_headless = is_linux
-            
-            if chrome_path and os.path.exists(chrome_path):
-                logger.info(f"DLStreams using browser path: {chrome_path} (Headless: {is_headless})")
-                executable_path = chrome_path
-            else:
-                logger.warning(f"DLStreams could not find system Chromium at {chrome_path}, falling back to default (Headless: {is_headless})")
-                executable_path = None
+    async def _launch_browser(self):
+        import os, sys
+        chrome_path = os.getenv("CHROME_BIN") or os.getenv("CHROME_EXE_PATH")
+        
+        is_linux = sys.platform.startswith("linux")
+        is_headless = is_linux
+        
+        if chrome_path and os.path.exists(chrome_path):
+            executable_path = chrome_path
+        else:
+            executable_path = None
 
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=is_headless,
-                executable_path=executable_path,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    "--autoplay-policy=no-user-gesture-required",
-                    "--disable-web-security",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                ],
-            )
-        return self._browser
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.launch(
+            headless=is_headless,
+            executable_path=executable_path,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--autoplay-policy=no-user-gesture-required",
+                "--disable-web-security",
+                "--disable-features=IsolateOrigins,site-per-process",
+            ],
+        )
+        return playwright, browser
 
     def _get_header(self, name: str, default: str | None = None) -> str | None:
         for key, value in self.request_headers.items():
@@ -203,7 +193,7 @@ class DLStreamsExtractor:
 
         logger.debug("DLStreams browser key fetch starting for %s", key_url)
         try:
-            browser = await self._get_browser()
+            playwright, browser = await self._launch_browser()
             context = await browser.new_context(
                 user_agent=self.base_headers["User-Agent"],
                 viewport={"width": 1366, "height": 768},
@@ -246,6 +236,8 @@ class DLStreamsExtractor:
                 self._clear_channel_cache(channel_id)
             finally:
                 await context.close()
+                await browser.close()
+                await playwright.stop()
         except PlaywrightTimeoutError as exc:
             logger.warning("DLStreams browser key fetch timed out for %s: %s", key_url, exc)
         except Exception as exc:
@@ -302,7 +294,7 @@ class DLStreamsExtractor:
             resolved_player_url = player_url or self._build_player_urls(channel_id)[0]
             logger.debug("DLStreams browser session capture starting for %s", channel_key)
             try:
-                browser = await self._get_browser()
+                playwright, browser = await self._launch_browser()
                 # Define a real-looking User-Agent to avoid 'Headless' detection
                 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
                 
@@ -409,6 +401,8 @@ class DLStreamsExtractor:
                     return manifest_text
                 finally:
                     await context.close()
+                    await browser.close()
+                    await playwright.stop()
             except Exception as exc:
                 self._mark_browser_failure(channel_key)
                 logger.warning("DLStreams browser session capture failed for %s: %s", channel_key, exc)
@@ -593,9 +587,3 @@ class DLStreamsExtractor:
         if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
-        if self._browser:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright:
-            await self._playwright.stop()
-            self._playwright = None
