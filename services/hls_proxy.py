@@ -2282,18 +2282,23 @@ class HLSProxy:
             logger.debug(f"   -> with headers: {headers}")
 
             # ✅ Use pooled session for better performance
-            # The session already has the proxy configured in its connector
+            forced_proxy = request.query.get("proxy") or None
+            bypass_warp = request.query.get("warp", "").lower() == "off"
+            
             if self._should_force_direct_from_query(request):
                 session = await self._get_session(url=key_url)
-                proxy_used = None
                 logger.debug("Using direct session for AES key request (forced)")
             else:
-                forced_proxy = request.query.get("proxy") or None
                 session, proxy_used = await self._get_proxy_session(
                     key_url, bypass_warp=bypass_warp, forced_proxy=forced_proxy
                 )
                 if proxy_used:
-                    logger.debug(f"Using pooled session with proxy: {proxy_used}")
+                    logger.info(f"🔑 Fetching AES key via PROXY: {proxy_used}")
+                    
+            # ✅ FIX: Per VixSrc, il referer della chiave DEVE essere il dominio del sito
+            if "vixsrc.to" in key_url:
+                headers["Referer"] = "https://vixsrc.to/"
+                headers["Origin"] = "https://vixsrc.to"
             secret_key = headers.pop("X-Secret-Key", None)
 
             # Calcola X-Key-Timestamp, X-Key-Nonce, X-Fingerprint, e X-Key-Path se abbiamo la secret_key
@@ -2333,7 +2338,7 @@ class HLSProxy:
                 )
 
             disable_ssl = get_ssl_setting_for_url(key_url, TRANSPORT_ROUTES)
-            async with session.get(key_url, headers=headers, ssl=not disable_ssl) as resp:
+            async with session.get(key_url, headers=headers, ssl=not disable_ssl, allow_redirects=True, timeout=15) as resp:
                 if resp.status == 200 or resp.status == 206:
                     key_data = await resp.read()
                     logger.debug(
