@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 
 import aiohttp
 import cloudscraper
-from config import BYPARR_URL, GLOBAL_PROXIES, TRANSPORT_ROUTES, get_proxy_for_url
+from config import GLOBAL_PROXIES, TRANSPORT_ROUTES, get_proxy_for_url
 from utils.cookie_cache import CookieCache
 
 logger = logging.getLogger(__name__)
@@ -19,12 +19,6 @@ logger = logging.getLogger(__name__)
 class ExtractorError(Exception):
     pass
 
-
-class Settings:
-    byparr_url = BYPARR_URL
-
-
-settings = Settings()
 
 _DOOD_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
