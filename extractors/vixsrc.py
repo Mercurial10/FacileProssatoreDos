@@ -14,7 +14,7 @@ from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from aiohttp_socks import ProxyError as AioProxyError
 from python_socks import ProxyError as PyProxyError
 from config import get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_connector_for_proxy, SELECTED_PROXY_CONTEXT
-from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT
+from config import FLARESOLVERR_URL, FLARESOLVERR_TIMEOUT, WARP_PROXY_URL
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +66,28 @@ class VixSrcExtractor:
             return
         site = self._normalize_base_site(target_url)
         endpoint = f"{self.flaresolverr_url.rstrip('/')}/v1"
-        payload = {"cmd": "request.get", "url": site, "maxTimeout": (self.flaresolverr_timeout + 60) * 1000}
-        async with aiohttp.ClientSession() as s:
-            async with s.post(endpoint, json=payload, timeout=aiohttp.ClientTimeout(total=self.flaresolverr_timeout + 95)) as r:
-                d = await r.json()
-        if d.get("status") != "ok":
-            raise ExtractorError(f"FlareSolverr: {d.get('message', '')}")
-        self._fs_cookies = {c["name"]: c["value"] for c in d["solution"].get("cookies", [])}
-        self._fs_user_agent = d["solution"].get("userAgent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-        logger.info(f"VixSrc: FS cookies: {list(self._fs_cookies.keys())}")
+        warp = WARP_PROXY_URL.strip()
+        proxies_to_try = [warp.replace("socks5h://", "socks5://", 1)] if warp else [None]
+        if None not in proxies_to_try:
+            proxies_to_try.append(None)
+        for proxy in proxies_to_try:
+            payload = {"cmd": "request.get", "url": site, "maxTimeout": (self.flaresolverr_timeout + 60) * 1000}
+            if proxy:
+                payload["proxy"] = proxy
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.post(endpoint, json=payload, timeout=aiohttp.ClientTimeout(total=self.flaresolverr_timeout + 95)) as r:
+                        d = await r.json()
+                if d.get("status") == "ok":
+                    self._fs_cookies = {c["name"]: c["value"] for c in d["solution"].get("cookies", [])}
+                    self._fs_user_agent = d["solution"].get("userAgent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                    logger.info(f"VixSrc: FS cookies via {proxy or 'direct'}: {list(self._fs_cookies.keys())}")
+                    return
+                logger.warning("FS failed via %s: %s", proxy or "direct", d.get("message", ""))
+            except Exception as e:
+                logger.warning("FS error via %s: %s", proxy or "direct", e)
+        raise ExtractorError("FlareSolverr: all attempts failed")
 
     async def _make_fs_request(self, url: str, headers: dict = None):
         from curl_cffi.requests import AsyncSession as CurlAsyncSession
@@ -91,8 +103,13 @@ class VixSrcExtractor:
             final_headers.update(headers)
         final_headers.pop("accept-encoding", None)
 
+        request_kwargs = {}
+        warp = WARP_PROXY_URL.strip()
+        if warp:
+            request_kwargs["proxies"] = {"http": warp, "https": warp}
+
         async with CurlAsyncSession(impersonate="chrome124") as sess:
-            r = await sess.get(url, headers=final_headers, timeout=30, allow_redirects=True)
+            r = await sess.get(url, headers=final_headers, timeout=30, allow_redirects=True, **request_kwargs)
             html = r.text
             logger.info(f"VixSrc FS: curl_cffi status={r.status_code} len={len(html) if html else 0} for {url}")
             if r.status_code != 200:
