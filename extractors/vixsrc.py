@@ -31,7 +31,10 @@ class VixSrcExtractor:
         self.session = None
         self.mediaflow_endpoint = "hls_manifest_proxy"
         self._session_lock = asyncio.Lock()
-        self.proxies = proxies or GLOBAL_PROXIES
+        self.proxies = []
+        for proxy in list(proxies or []) + list(GLOBAL_PROXIES):
+            if proxy and proxy not in self.proxies:
+                self.proxies.append(proxy)
         self.is_vixsrc = True
         self.last_used_proxy = None
         self.flaresolverr_url = FLARESOLVERR_URL
