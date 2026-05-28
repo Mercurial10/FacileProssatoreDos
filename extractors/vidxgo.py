@@ -189,21 +189,15 @@ class VidXgoExtractor:
         if not manifest_text:
             return manifest_text
         # Drop the end-of-stream marker so the player keeps polling.
-        # We do NOT touch TARGETDURATION or MEDIA-SEQUENCE: the underlying
-        # segment list is identical until the cache expires, so the player
-        # treats it as a stalled live stream and just retries the manifest.
         out_lines = []
         for line in manifest_text.splitlines():
             s = line.strip()
             if s == "#EXT-X-ENDLIST":
                 continue
-            # Force EVENT playlist type (a few players require this hint to
-            # keep re-fetching when there's no ENDLIST).
             if s.startswith("#EXT-X-PLAYLIST-TYPE"):
                 out_lines.append("#EXT-X-PLAYLIST-TYPE:EVENT")
                 continue
             out_lines.append(line)
-        # If no PLAYLIST-TYPE tag existed, inject one right after #EXTM3U.
         if not any(l.startswith("#EXT-X-PLAYLIST-TYPE") for l in out_lines):
             for i, l in enumerate(out_lines):
                 if l.strip() == "#EXTM3U":
@@ -224,8 +218,6 @@ class VidXgoExtractor:
         background_refresh = bool(kwargs.get("background_refresh"))
         request_headers = kwargs.get("request_headers") or {}
 
-        # Allow the caller (provider) to override the playback domain (Referer/Origin)
-        # via vd_domain=… query parameter forwarded by EP. Defaults to v.vidxgo.co.
         vd_domain = (
             kwargs.get("vd_domain")
             or kwargs.get("h_referer")
@@ -251,21 +243,10 @@ class VidXgoExtractor:
         logger.info(f"vidxgo: extracted m3u8 for {url} -> {m3u8_url[:80]}...")
 
         # 3. Fetch master + each referenced variant playlist.
-        # Override referer/origin to match the actual CDN domain from the m3u8 URL.
-        m3u8_parsed = urlparse(m3u8_url)
-        m3u8_domain = f"{m3u8_parsed.scheme}://{m3u8_parsed.netloc}"
-        cdn_headers = {**playback_headers, "referer": f"{m3u8_domain}/", "origin": m3u8_domain}
-        # We keep the manifests as VOD (with ENDLIST) so the player starts
-        # from the beginning and seeking works correctly. CDN tokens (~5 min
-        # TTL, visible as `e=` ms epoch) are rotated by EP's background
-        # refresh loop, and the segment proxy handler rewrites the `t=`/`e=`
-        # query of each segment to the latest captured value at fetch time.
-        master_text = await self._fetch(m3u8_url, cdn_headers)
+        master_text = await self._fetch(m3u8_url, playback_headers)
         if "#EXTM3U" not in master_text:
             raise ExtractorError("VidXgo: extracted URL did not return a valid HLS manifest")
 
-        # Collect variant URLs (any non-comment non-empty line right after
-        # #EXT-X-STREAM-INF). Resolve them against the master URL.
         from urllib.parse import urljoin
         captured_map: dict[str, str] = {}
         master_lines = master_text.splitlines()
@@ -276,7 +257,6 @@ class VidXgoExtractor:
                 if raw and not raw.startswith("#"):
                     variant_urls.append(urljoin(m3u8_url, raw))
 
-        # Also capture audio/subtitle EXT-X-MEDIA playlist URLs
         for line in master_lines:
             if line.startswith("#EXT-X-MEDIA:") and 'URI="' in line:
                 uri_start = line.find('URI="') + 5
@@ -286,11 +266,9 @@ class VidXgoExtractor:
                     if media_url not in variant_urls:
                         variant_urls.append(media_url)
 
-        # Fetch variants in parallel; ignore individual failures so the master
-        # still plays even if one rendition is broken.
         async def _grab(v_url: str) -> tuple[str, str | None]:
             try:
-                txt = await self._fetch(v_url, cdn_headers)
+                txt = await self._fetch(v_url, playback_headers)
                 return v_url, txt
             except Exception as e:
                 logger.warning(f"vidxgo: variant fetch failed {v_url[:80]}...: {e}")
@@ -303,13 +281,11 @@ class VidXgoExtractor:
                     continue
                 captured_map[v_url] = v_text
 
-        # Single-variant streams: master IS the variant.
         captured_map[m3u8_url] = master_text
 
-        # 4. Return.
         return {
             "destination_url": m3u8_url,
-            "request_headers": cdn_headers,
+            "request_headers": playback_headers,
             "captured_manifest": master_text,
             "captured_manifests": captured_map,
             "mediaflow_endpoint": self.mediaflow_endpoint,
