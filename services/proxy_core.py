@@ -258,12 +258,14 @@ class HLSProxyCoreMixin:
         for key in expired_keys:
             self.captured_hls_manifest_map.pop(key, None)
 
-        # Derive a stable id from (source_url + filename) when possible, so that
+        # Derive a stable id from (source_url + manifest tail) when possible, so that
         # extractors that rotate signed-token URLs (vidxgo, …) keep emitting the
         # same cm_<id> across refreshes — otherwise the player would see a new
-        # rendition every TTL and restart playback from zero.
+        # rendition every TTL and restart playback from zero. Use multiple path
+        # parts because VixSrc audio/video variants often share `index.m3u8`.
         if source_url:
-            suffix = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or url
+            path_parts = [part for part in urllib.parse.urlparse(url).path.split("/") if part]
+            suffix = "/".join(path_parts[-3:]) or url
             stable_key = f"{source_url}|{suffix}"
         else:
             stable_key = url
@@ -308,7 +310,7 @@ class HLSProxyCoreMixin:
                             force_refresh=True,
                             background_refresh=True,
                         )
-                        suffix = urllib.parse.urlparse(captured_url).path.rsplit("/", 1)[-1]
+                        captured_path = urllib.parse.urlparse(captured_url).path
                         refreshed_manifests = list(
                             (refreshed.get("captured_manifests") or {}).items()
                         )
@@ -318,7 +320,10 @@ class HLSProxyCoreMixin:
                                 refreshed.get("captured_manifest"),
                             )]
                         for refreshed_url, refreshed_manifest in reversed(refreshed_manifests):
-                            if refreshed_url and urllib.parse.urlparse(refreshed_url).path.endswith(suffix):
+                            if refreshed_url and self._segment_paths_match(
+                                captured_path,
+                                urllib.parse.urlparse(refreshed_url).path,
+                            ):
                                 refreshed_headers = refreshed.get("request_headers", captured_headers)
                                 # CRITICAL: bump stored_at so the entry is not
                                 # GC'd by the entry_ttl check above, and so the
