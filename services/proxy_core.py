@@ -72,7 +72,27 @@ class HLSProxyCoreMixin:
                     candidates.append((stored_at, abs_seg))
                     break
         if not candidates:
-            return None
+            # VixSrc rotates signed query params per rendition. When the player
+            # asks for a segment that just fell out of the latest playlist
+            # window, reuse the freshest URL directory/query from the same
+            # rendition and keep the requested segment filename.
+            if self._is_vixsrc_signed_segment(segment_url):
+                for entry in self.captured_hls_manifest_map.values():
+                    captured_url, captured_manifest, _, stored_at, _, _ = entry
+                    if not captured_manifest:
+                        continue
+                    for abs_seg in self._iter_hls_manifest_urls(captured_url, captured_manifest):
+                        cand = urllib.parse.urlparse(abs_seg)
+                        if self._segment_renditions_match(seg_path, cand.path):
+                            rebuilt = self._rebuild_segment_url_for_same_rendition(
+                                segment_url,
+                                abs_seg,
+                            )
+                            if rebuilt and rebuilt != segment_url:
+                                candidates.append((stored_at, rebuilt))
+                            break
+            if not candidates:
+                return None
         candidates.sort(key=lambda x: x[0], reverse=True)
         fresh_url = candidates[0][1]
         if fresh_url == segment_url:
@@ -183,7 +203,10 @@ class HLSProxyCoreMixin:
                 continue
             for abs_seg in self._iter_hls_manifest_urls(captured_url, captured_manifest):
                 cand = urllib.parse.urlparse(abs_seg)
-                if self._segment_paths_match(parsed.path, cand.path):
+                if self._segment_paths_match(parsed.path, cand.path) or (
+                    self._is_vixsrc_signed_segment(segment_url)
+                    and self._segment_renditions_match(parsed.path, cand.path)
+                ):
                     matches.append((stored_at, source_url, captured_headers, entry_ttl))
                     break
         return matches
@@ -241,6 +264,32 @@ class HLSProxyCoreMixin:
 
         common_tail = min(3, len(old_parts), len(candidate_parts))
         return old_parts[-common_tail:] == candidate_parts[-common_tail:]
+
+    @staticmethod
+    def _segment_renditions_match(old_path: str, candidate_path: str) -> bool:
+        old_parts = [part for part in old_path.split("/") if part]
+        candidate_parts = [part for part in candidate_path.split("/") if part]
+        if len(old_parts) < 3 or len(candidate_parts) < 3:
+            return False
+        # VixSrc video paths end with .../video/<rendition>/<segment>.ts.
+        return old_parts[-3:-1] == candidate_parts[-3:-1]
+
+    @staticmethod
+    def _rebuild_segment_url_for_same_rendition(old_url: str, fresh_url: str) -> str | None:
+        try:
+            old = urllib.parse.urlparse(old_url)
+            fresh = urllib.parse.urlparse(fresh_url)
+        except Exception:
+            return None
+        old_parts = [part for part in old.path.split("/") if part]
+        fresh_parts = [part for part in fresh.path.split("/") if part]
+        if not old_parts or not fresh_parts:
+            return None
+        fresh_dir = "/" + "/".join(fresh_parts[:-1])
+        rebuilt_path = f"{fresh_dir}/{old_parts[-1]}"
+        return urllib.parse.urlunparse(
+            fresh._replace(path=rebuilt_path, query=fresh.query)
+        )
 
     async def store_captured_hls_manifest(
         self,

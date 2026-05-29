@@ -234,7 +234,7 @@ class HLSProxyStreamingMixin:
             headers.pop("x-easyproxy-disable-ssl", None)
             is_special_cdn = is_special_cdn_stream(stream_url)
 
-            if request.path.startswith("/proxy/hls/segment."):
+            if request.path.startswith("/proxy/hls/segment.") or self._is_vixsrc_signed_segment(stream_url):
                 self._schedule_segment_count_refresh(stream_url)
 
             if is_special_cdn:
@@ -355,7 +355,7 @@ class HLSProxyStreamingMixin:
                 resp_ctx = session.get(request_target, headers=headers, ssl=not disable_ssl)
 
             async def retry_hls_segment_with_fresh_token():
-                if not request.path.startswith("/proxy/hls/segment."):
+                if not request.path.startswith("/proxy/hls/segment.") and not self._is_vixsrc_signed_segment(stream_url):
                     return None
                 refreshed_url = self._refresh_segment_token(stream_url)
                 if not refreshed_url or refreshed_url == stream_url:
