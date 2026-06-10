@@ -102,7 +102,8 @@ class VixSrcExtractor:
             alive = [p for p in dedicated if p not in DEAD_PROXIES or now >= DEAD_PROXIES.get(p, 0)]
         if alive:
             return alive
-        return dedicated[:1] if getattr(dedicated, "strict", False) else []
+        # All dedicated proxies dead — fall back to general resolution (direct, WARP, etc.)
+        return get_ordered_proxies_for_url(url, self.extractor_name, self.proxies, bypass_warp=self.bypass_warp_active)
 
     async def _preferred_proxy(self, url: str, forced_proxy: str | None = None) -> str | None:
         candidates = await self._proxy_candidates(url, forced_proxy)
@@ -242,7 +243,7 @@ class VixSrcExtractor:
                         self.cookies.update(new_cookies)
                         self._save_cached_cookies(url)
                     return True, proxy, MockResponse(content, resp.status_code, url), None, resp.status_code
-                if proxy_value and resp.status_code != 404:
+                if proxy_value and resp.status_code not in (403, 404):
                     mark_proxy_dead(proxy_value)
                 return False, proxy, None, None, resp.status_code
             except Exception as exc:
